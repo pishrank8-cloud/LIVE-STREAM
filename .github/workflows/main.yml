@@ -1,53 +1,42 @@
-name: Video + Audio Stream (Loop & Auto-Restart)
-
-on:
+name: RDP-UNLIMITED-LOOP
+on: 
   workflow_dispatch:
-  repository_dispatch:
-    types: [restart_stream]
 
 jobs:
-  stream:
-    runs-on: ubuntu-latest
-    timeout-minutes: 358 
-
+  build:
+    runs-on: windows-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+    - name: 1. Setup User & RDP
+      run: |
+        $user = "FaizLive"
+        $pass = "faiz1611live"
+        net user $user $pass /add
+        net localgroup administrators $user /add
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-      - name: Install FFmpeg
-        run: |
-          sudo apt update
-          sudo apt install -y ffmpeg
+    - name: 2. Install Tailscale & Connect
+      run: |
+        Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile tailscale.exe
+        Start-Process tailscale.exe -ArgumentList "/quiet" -Wait
+        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey ${{ secrets.TAILSCALE_AUTH_KEY }} --accept-routes
+        $ip = (& "C:\Program Files\Tailscale\tailscale.exe" ip -4)
+        Write-Host "****************************************************"
+        Write-Host "YOUR RDP IP: $ip" -ForegroundColor Yellow -BackgroundColor Red
+        Write-Host "Username: FaizLive | Password: $pass"
+        Write-Host "****************************************************"
 
-      - name: Start Live Stream
-        env:
-          STREAM_URL: "rtmp://a.rtmp.youtube.com/live2/k92k-s69p-66zh-u5qq-9fa5"
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          echo "Streaming starting with Copyright Protection (Pitch & Speed Filter)..."
-          
-          # FFmpeg command with Audio Filters for copyright protection
-          # atempo=1.02 (2% fast) and asetrate changes pitch
-          ffmpeg -re \
-            -stream_loop -1 -i video.mp4 \
-            -stream_loop -1 -i audio.mp3 \
-            -filter_complex "[1:a]atempo=1.02,asetrate=44100*1.02,aresample=44100[aout]" \
-            -map 0:v:0 -map "[aout]" \
-            -c:v libx264 \
-            -preset veryfast \
-            -pix_fmt yuv420p \
-            -g 50 \
-            -b:v 2000k \
-            -c:a aac \
-            -b:a 128k \
-            -t 05:50:00 \
-            -f flv \
-            "$STREAM_URL"
-
-          echo "FFmpeg finished. Triggering next workflow..."
-          
-          curl -X POST \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/dispatches \
-            -d '{"event_type": "restart_stream"}'
+    - name: 3. Timer & Auto-Infinite Restart
+      run: |
+        # 5 Hours 50 Minutes = 350 Minutes
+        $totalMinutes = 350
+        $start = Get-Date
+        while (((Get-Date) - $start).TotalMinutes -lt $totalMinutes) {
+          Write-Output "RDP Session Active... $((Get-Date) - $start)"
+          Start-Sleep -Seconds 60
+        }
+        
+        Write-Output "Restarting workflow for unlimited loop..."
+        gh workflow run RDP-UNLIMITED-LOOP
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
